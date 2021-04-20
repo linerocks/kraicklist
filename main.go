@@ -4,31 +4,42 @@ import (
 	"bufio"
 	"bytes"
 	"compress/gzip"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"log"
-	"math"
 	"net/http"
 	"os"
-	"sort"
 	"strconv"
 
-	"github.com/ahmetb/go-linq/v3"
-	"github.com/sahilm/fuzzy"
+	_ "github.com/mattn/go-sqlite3"
 )
 
 func main() {
-	// initialize searcher
-	searcher := &Searcher{}
-	err := searcher.Load("data.gz")
+	dbpath := os.Getenv("DB_PATH")
+	db, err := sql.Open("sqlite3", dbpath)
 	if err != nil {
-		log.Fatalf("unable to load search data due: %v", err)
+		log.Fatalf("Cannot connect to database : %q", err)
+		return
+	}
+	defer db.Close()
+
+	// migration
+	migrationOnly := os.Getenv("MIGRATION_ONLY")
+	if migrationOnly == "TRUE" {
+		// load data to sqlite
+		sourcepath := os.Getenv("SOURCE_PATH")
+		err := loadData(db, sourcepath, dbpath)
+		if err != nil {
+			log.Fatalf("unable to start server due: %v", err)
+		}
+		return
 	}
 
 	// define http handlers
 	fs := http.FileServer(http.Dir("./static"))
 	http.Handle("/", fs)
-	http.HandleFunc("/search", handleSearch(searcher))
+	http.HandleFunc("/search", handleSearch(db))
 
 	// define port, we need to set it as env for Heroku deployment
 	port := os.Getenv("PORT")
@@ -44,7 +55,120 @@ func main() {
 	}
 }
 
-func handleSearch(s *Searcher) http.HandlerFunc {
+func loadData(db *sql.DB, filepath string, dbpath string) error {
+	if _, err := os.Stat(dbpath); os.IsNotExist(err) {
+		fmt.Println("Loading data...")
+
+		script := `
+			CREATE TABLE records (
+				id INTEGER NOT NULL PRIMARY KEY,
+				title TEXT,
+				content TEXT,
+				thumb_url TEXT,
+				updated_at INTEGER
+			);
+
+			CREATE TABLE tags (
+				id INTEGER NOT NULL PRIMARY KEY,
+				record_id INTEGER,
+				tag TEXT,
+				FOREIGN KEY(record_id) REFERENCES records(id)
+			);
+
+			CREATE TABLE images (
+				id INTEGER NOT NULL PRIMARY KEY,
+				record_id INTEGER,
+				url TEXT,
+				FOREIGN KEY(record_id) REFERENCES records(id)
+			);
+		`
+		_, err = db.Exec(script)
+		if err != nil {
+			return fmt.Errorf("%q: %s", err, script)
+		}
+
+		// open file
+		file, err := os.Open(filepath)
+		if err != nil {
+			return fmt.Errorf("unable to open source file due: %v", err)
+		}
+		defer file.Close()
+
+		// read as gzip
+		reader, err := gzip.NewReader(file)
+		if err != nil {
+			return fmt.Errorf("unable to initialize gzip reader due: %v", err)
+		}
+
+		// read the reader using scanner to contstruct records
+
+		cs := bufio.NewScanner(reader)
+		for cs.Scan() {
+			var r Record
+			err = json.Unmarshal(cs.Bytes(), &r)
+			if err != nil {
+				continue
+			}
+
+			script = fmt.Sprintf(`INSERT INTO records(id, title, content, thumb_url, updated_at) values(
+				%d,
+				"%s",
+				"%s",
+				"%s",
+				%d
+			);
+			`,
+				r.ID,
+				r.Title,
+				r.Content,
+				r.ThumbURL,
+				r.UpdatedAt,
+			)
+
+			_, err = db.Exec(script)
+			if err != nil {
+				return fmt.Errorf("unable to load source data: %v", err)
+			}
+
+			for _, element := range r.Tags {
+				script = fmt.Sprintf(`INSERT INTO tags(record_id, tag) values(
+					%d,
+					"%s"
+				);
+				`,
+					r.ID,
+					element,
+				)
+
+				_, err = db.Exec(script)
+				if err != nil {
+					return fmt.Errorf("unable to load source data: %v", err)
+				}
+			}
+
+			for _, element := range r.ImageURLs {
+				script = fmt.Sprintf(`INSERT INTO images(record_id, url) values(
+					%d,
+					"%s"
+				);
+				`,
+					r.ID,
+					element,
+				)
+
+				_, err = db.Exec(script)
+				if err != nil {
+					return fmt.Errorf("unable to load source data: %v", err)
+				}
+			}
+		}
+	}
+
+	fmt.Println("Database is ready...")
+	return nil
+}
+
+func handleSearch(db *sql.DB) http.HandlerFunc {
 	return http.HandlerFunc(
 		func(w http.ResponseWriter, r *http.Request) {
 			// fetch query string from query params
@@ -55,18 +179,84 @@ func handleSearch(s *Searcher) http.HandlerFunc {
 				return
 			}
 
-			// simple cache
-			if q != s.prevQuery {
-				// search relevant records
-				records, err := s.FuzzySearch(q)
-				s.prevRecords = records
-				s.prevQuery = q
+			sizeQuery := r.URL.Query().Get("size")
+			size, err := strconv.Atoi(sizeQuery)
+			if err != nil {
+				size = 10
+			}
 
+			cursorQuery := r.URL.Query().Get("cursor")
+			cursor, err := strconv.Atoi(cursorQuery)
+			if err != nil {
+				cursor = 0
+			}
+
+			script := fmt.Sprintf(`SELECT COUNT (1) FROM records WHERE title LIKE '%%%s%%' OR content LIKE '%%%s%%'`, q, q)
+
+			var count int
+			result, err := db.Query(script)
+			if err != nil {
+				w.WriteHeader(http.StatusBadRequest)
+				w.Write([]byte("query failed"))
+				return
+			}
+
+			for result.Next() {
+				err := result.Scan(&count)
 				if err != nil {
-					w.WriteHeader(http.StatusInternalServerError)
-					w.Write([]byte(err.Error()))
+					log.Fatal(err)
+				}
+			}
+
+			script = fmt.Sprintf(`SELECT id, title, content, thumb_url FROM records WHERE (title LIKE '%%%s%%' OR content LIKE '%%%s%%') AND id > %d LIMIT %d`, q, q, cursor, size)
+
+			var records Records
+			result, err = db.Query(script)
+			if err != nil {
+				w.WriteHeader(http.StatusBadRequest)
+				w.Write([]byte("query failed"))
+				return
+			}
+
+			for result.Next() {
+				var record Record
+
+				var id int
+				var title string
+				var content string
+				var thumb_url string
+
+				err = result.Scan(&id, &title, &content, &thumb_url)
+				if err != nil {
+					log.Fatal(err)
+				}
+
+				record.ID = id
+				record.Title = title
+				record.Content = content
+				record.ThumbURL = thumb_url
+
+				records = append(records, record)
+			}
+
+			var remainingItems int
+			if len(records) > 0 {
+				script = fmt.Sprintf(`SELECT COUNT (1) FROM records WHERE (title LIKE '%%%s%%' OR content LIKE '%%%s%%') AND id > %d`, q, q, records[len(records)-1].ID)
+				result, err = db.Query(script)
+				if err != nil {
+					w.WriteHeader(http.StatusBadRequest)
+					w.Write([]byte("query failed"))
 					return
 				}
+
+				for result.Next() {
+					err := result.Scan(&remainingItems)
+					if err != nil {
+						log.Fatal(err)
+					}
+				}
+			} else {
+				remainingItems = 0
 			}
 
 			// output success response
@@ -74,23 +264,15 @@ func handleSearch(s *Searcher) http.HandlerFunc {
 			encoder := json.NewEncoder(buf)
 			res := map[string]interface{}{}
 
-			pageQuery := r.URL.Query().Get("page")
-			page, err := strconv.Atoi(pageQuery)
-			if err != nil || page <= 0 {
-				page = 1
-			}
-
-			sizeQuery := r.URL.Query().Get("size")
-			size, err := strconv.Atoi(sizeQuery)
-			if err != nil {
-				size = 10
-			}
-
-			res["data"] = linq.From(s.prevRecords).Skip((page - 1) * size).Take((size)).Results()
-			res["page"] = page
+			res["docs"] = records
+			res["count"] = count
+			res["remainingItems"] = remainingItems
 			res["size"] = size
-			res["totalPage"] = math.Ceil(float64(s.prevRecords.Len()) / float64(size))
-			res["total"] = s.prevRecords.Len()
+			res["cursor"] = cursor
+
+			if len(records) > 0 {
+				res["nextCursor"] = records[len(records)-1].ID
+			}
 
 			encoder.Encode(res)
 			w.Header().Set("Content-Type", "application/json")
@@ -99,74 +281,8 @@ func handleSearch(s *Searcher) http.HandlerFunc {
 	)
 }
 
-type Searcher struct {
-	records     Records
-	prevRecords Records
-	prevQuery   string
-}
-
-func (s *Searcher) Load(filepath string) error {
-	// open file
-	file, err := os.Open(filepath)
-	if err != nil {
-		return fmt.Errorf("unable to open source file due: %v", err)
-	}
-	defer file.Close()
-
-	// read as gzip
-	reader, err := gzip.NewReader(file)
-	if err != nil {
-		return fmt.Errorf("unable to initialize gzip reader due: %v", err)
-	}
-
-	// read the reader using scanner to contstruct records
-	var records Records
-	cs := bufio.NewScanner(reader)
-	for cs.Scan() {
-		var r Record
-		err = json.Unmarshal(cs.Bytes(), &r)
-		if err != nil {
-			continue
-		}
-		records = append(records, r)
-	}
-	s.records = records
-
-	return nil
-}
-
-func (s *Searcher) FuzzySearch(query string) (Records, error) {
-	var indexScore []interface{}
-	var result Records
-
-	fuzzyResults := fuzzy.FindFrom(query, s.records)
-
-	for _, r := range fuzzyResults {
-		indexScore = append(indexScore, KV{r.Index, r.Score})
-	}
-
-	sort.Slice(indexScore, func(i, j int) bool {
-		return indexScore[i].(KV).Value > indexScore[j].(KV).Value
-	})
-
-	// limit the score relative to the first entry
-	indexScore = linq.From(indexScore).Where(func(r interface{}) bool {
-		return r.(KV).Value >= (indexScore[0].(KV).Value - 200)
-	}).Results()
-
-	for _, k := range indexScore {
-		result = append(result, s.records[k.(KV).Key])
-	}
-
-	return result, nil
-}
-
-type KV struct {
-	Key   int
-	Value int
-}
 type Record struct {
-	ID        int64    `json:"id"`
+	ID        int      `json:"id"`
 	Title     string   `json:"title"`
 	Content   string   `json:"content"`
 	ThumbURL  string   `json:"thumb_url"`
@@ -176,11 +292,3 @@ type Record struct {
 }
 
 type Records []Record
-
-func (r Records) String(i int) string {
-	return r[i].Title + " " + r[i].Content
-}
-
-func (r Records) Len() int {
-	return len(r)
-}
