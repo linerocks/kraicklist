@@ -192,6 +192,8 @@ func loadData(db *sql.DB, filepath string, dbpath string) error {
 func handleSearch(db *sql.DB) http.HandlerFunc {
 	return http.HandlerFunc(
 		func(w http.ResponseWriter, r *http.Request) {
+			start := time.Now()
+
 			// fetch query string from query params
 			q := r.URL.Query().Get("q")
 			if len(q) == 0 {
@@ -229,7 +231,6 @@ func handleSearch(db *sql.DB) http.HandlerFunc {
 				}
 			}
 
-			start := time.Now()
 			script = fmt.Sprintf(`SELECT id, title, content, thumb_url FROM records WHERE (title LIKE '%%%s%%' OR content LIKE '%%%s%%') AND id > %d LIMIT %d`, q, q, cursor, size)
 
 			var records Records
@@ -260,7 +261,6 @@ func handleSearch(db *sql.DB) http.HandlerFunc {
 
 				records = append(records, record)
 			}
-			elapsed := time.Since(start)
 
 			var remainingItems int
 			if len(records) > 0 {
@@ -282,6 +282,8 @@ func handleSearch(db *sql.DB) http.HandlerFunc {
 				remainingItems = 0
 			}
 
+			elapsed := time.Since(start)
+
 			// output success response
 			buf := new(bytes.Buffer)
 			encoder := json.NewEncoder(buf)
@@ -292,7 +294,7 @@ func handleSearch(db *sql.DB) http.HandlerFunc {
 			res["remainingItems"] = remainingItems
 			res["size"] = size
 			res["cursor"] = cursor
-			res["executionTime"] = float64(elapsed) / 10e+6
+			res["executionTime"] = float64(elapsed) / 10e+6 // milisecond
 
 			if len(records) > 0 {
 				res["nextCursor"] = records[len(records)-1].ID
