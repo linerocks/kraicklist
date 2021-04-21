@@ -87,22 +87,32 @@ func loadData(db *sql.DB, filepath string, dbpath string) error {
 			return fmt.Errorf("%q: %s", err, script)
 		}
 
-		// open file
+		totalWork := 0
 		file, err := os.Open(filepath)
 		if err != nil {
 			return fmt.Errorf("unable to open source file due: %v", err)
 		}
 		defer file.Close()
-
-		// read as gzip
 		reader, err := gzip.NewReader(file)
 		if err != nil {
 			return fmt.Errorf("unable to initialize gzip reader due: %v", err)
 		}
-
-		// read the reader using scanner to contstruct records
-
 		cs := bufio.NewScanner(reader)
+		for cs.Scan() {
+			totalWork++
+		}
+
+		currentWork := 0
+		file, err = os.Open(filepath)
+		if err != nil {
+			return fmt.Errorf("unable to open source file due: %v", err)
+		}
+		defer file.Close()
+		reader, err = gzip.NewReader(file)
+		if err != nil {
+			return fmt.Errorf("unable to initialize gzip reader due: %v", err)
+		}
+		cs = bufio.NewScanner(reader)
 		for cs.Scan() {
 			var r Record
 			err = json.Unmarshal(cs.Bytes(), &r)
@@ -127,7 +137,8 @@ func loadData(db *sql.DB, filepath string, dbpath string) error {
 
 			_, err = db.Exec(script)
 			if err != nil {
-				log.Fatal(err)
+				fmt.Printf("Record insertion script execution error : %v", err)
+				currentWork += 1
 				continue
 			}
 
@@ -143,7 +154,8 @@ func loadData(db *sql.DB, filepath string, dbpath string) error {
 
 				_, err = db.Exec(script)
 				if err != nil {
-					log.Fatal(err)
+					fmt.Printf("Tags insertion script execution error : %v", err)
+					currentWork += 1
 					continue
 				}
 			}
@@ -160,14 +172,18 @@ func loadData(db *sql.DB, filepath string, dbpath string) error {
 
 				_, err = db.Exec(script)
 				if err != nil {
-					log.Fatal(err)
+					fmt.Printf("Images insertion script execution error : %v", err)
+					currentWork += 1
 					continue
 				}
 			}
+
+			currentWork += 1
+			fmt.Printf("\rProgress %.2f%% (%d/%d)", 100.0*float64(currentWork)/float64(totalWork), currentWork, totalWork)
 		}
 	}
 
-	fmt.Println("Database is ready...")
+	fmt.Println("\nDatabase is ready...")
 	return nil
 }
 
