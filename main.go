@@ -130,8 +130,8 @@ func loadData(db *sql.DB, filepath string, dbpath string) error {
 			);
 			`,
 				r.ID,
-				strings.ReplaceAll(r.Title, `"`, `\"`),
-				strings.ReplaceAll(r.Content, `"`, `\"`),
+				strings.ReplaceAll(r.Title, `"`, `""`),
+				strings.ReplaceAll(r.Content, `"`, `""`),
 				r.ThumbURL,
 				r.UpdatedAt,
 			)
