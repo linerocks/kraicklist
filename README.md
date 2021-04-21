@@ -63,6 +63,12 @@ For comparison
 
 <img src="./media/cursor-based-pagination.png"/>
 
+- Frontend (FE) improvement
+
+Adding minor FE feature e.g. pagination, search result image, and search summary.
+
+<img src="./media/fe-improvement.png"/>
+
 ## Database diagram
 
 The database design as following
