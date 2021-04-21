@@ -48,7 +48,7 @@
         })
 
         var cursor = []
-        var size = 10;
+        var size = 5;
 
         const search = (e) => {
             cursor = [0]
@@ -84,7 +84,7 @@
 
                             const firstElement = (1 + (cursor.length - 2) * size)
                             const lastElement = (cursor.length - 1) === totalPage ? (firstElement - 1) + results.docs.length : (cursor.length - 1) * size
-                            document.getElementById("summary").innerHTML = "Showing page " + (cursor.length - 1) + " of " + totalPage + " (" + firstElement + "-" + lastElement + " of " + total + " items)";
+                            document.getElementById("summary").innerHTML = "Showing page " + (cursor.length - 1) + " of " + totalPage + " (" + firstElement + "-" + lastElement + " of " + total + " items) executed in " + results.executionTime.toFixed(2) + " ms";
 
                             if (cursor.length === 2) document.getElementById("prevButton").disabled = true;
                             else document.getElementById("prevButton").disabled = false;

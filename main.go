@@ -12,6 +12,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	_ "github.com/mattn/go-sqlite3"
 )
@@ -228,6 +229,7 @@ func handleSearch(db *sql.DB) http.HandlerFunc {
 				}
 			}
 
+			start := time.Now()
 			script = fmt.Sprintf(`SELECT id, title, content, thumb_url FROM records WHERE (title LIKE '%%%s%%' OR content LIKE '%%%s%%') AND id > %d LIMIT %d`, q, q, cursor, size)
 
 			var records Records
@@ -258,6 +260,7 @@ func handleSearch(db *sql.DB) http.HandlerFunc {
 
 				records = append(records, record)
 			}
+			elapsed := time.Since(start)
 
 			var remainingItems int
 			if len(records) > 0 {
@@ -289,6 +292,7 @@ func handleSearch(db *sql.DB) http.HandlerFunc {
 			res["remainingItems"] = remainingItems
 			res["size"] = size
 			res["cursor"] = cursor
+			res["executionTime"] = float64(elapsed) / 10e+6
 
 			if len(records) > 0 {
 				res["nextCursor"] = records[len(records)-1].ID
