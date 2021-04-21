@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 
 	_ "github.com/mattn/go-sqlite3"
 )
@@ -129,8 +130,8 @@ func loadData(db *sql.DB, filepath string, dbpath string) error {
 			);
 			`,
 				r.ID,
-				r.Title,
-				r.Content,
+				strings.ReplaceAll(r.Title, `"`, `\"`),
+				strings.ReplaceAll(r.Content, `"`, `\"`),
 				r.ThumbURL,
 				r.UpdatedAt,
 			)
