@@ -127,7 +127,8 @@ func loadData(db *sql.DB, filepath string, dbpath string) error {
 
 			_, err = db.Exec(script)
 			if err != nil {
-				return fmt.Errorf("unable to load source data: %v", err)
+				log.Fatal(err)
+				continue
 			}
 
 			for _, element := range r.Tags {
@@ -142,7 +143,8 @@ func loadData(db *sql.DB, filepath string, dbpath string) error {
 
 				_, err = db.Exec(script)
 				if err != nil {
-					return fmt.Errorf("unable to load source data: %v", err)
+					log.Fatal(err)
+					continue
 				}
 			}
 
@@ -158,7 +160,8 @@ func loadData(db *sql.DB, filepath string, dbpath string) error {
 
 				_, err = db.Exec(script)
 				if err != nil {
-					return fmt.Errorf("unable to load source data: %v", err)
+					log.Fatal(err)
+					continue
 				}
 			}
 		}
