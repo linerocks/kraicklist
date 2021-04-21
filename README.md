@@ -1,57 +1,55 @@
 # KraickList
 
+### Table of content
+- Getting started
+- Improvement
+- Load testing
+## Getting started
+Before building the project, pleae make sure to prepare your data first. If you are willing to just run using test data, rename the test data as following
+```
+cp test-data.gz data.gz
+```
+If you have the similar data format, kindly download it
+```
+wget <YOUR_LINK> -O data.gz
+```
+
+Once the data is set, build the data (using Docker for reproducibility)
+```
+docker build . -t "kraicklist"
+```
+
+Besides building, this Dockerfile is also doing the migration/transformation of our compressed data into sql databse.
+
+If the build is done, let's run our application then.
+```
+docker run -d -p 3001:3001 kraicklist:latest
+```
+
+
 ## Improvement
+- Transform data into sql
 
-1. Pagination
+If we are playing with a bunch of data, it's undebatable and best to use database (let's take sql as for now) instead create our own data object. This way we can utilize the sql power to query the user request in the most efficient form. For the sake of simplicity, I make use of sqlite3, so that we don't need to fire database instance in our tiny machine. But for real deployment, use battle tested database like postgresql (or other db) and always separate the worker instance and stateful instance. We should use the database for data storing and make our application remains stateless.
 
-Pagination helps us to limit the total search result shown to the user at a time. This makes the API data transfer become faster because it loads fewer item at a time.
+- Cursor based pagination
 
-   <img src="./media/basic_search.gif"/>
+It is common to do pagination using offset based syntax as below
+```
+SELECT * FROM table WHERE something = "value" LIMIT 10 OFFSET 90
+```
 
+This approach actually has major drawback. This offset based query will perform fullscan table and make the query inefficient, considering we only want to have a smaller part of whole matched rows at a time.
 
-2. Fuzzy search
+So how do we do it better? Use cursor based pagination. Just tweak your script into
+```
+SELECT * FROM table WHERE something = "value" AND id > 90 LIMIT 10
+```
 
-The odds of user will type wrong word or mixed case is inevitable. Instead of stopping the user experience by returning error, it would be better if the search engine use fuzzy search method to search the item, so that results with closer match will appear to the user.
+Adding index on query will greatly improve the query because it won't undergo the fullscan table. Instead this query will jump into specified starting point, take as much data needed at a time, and result flat execution time regardless the data size. 
 
-<img src="./media/fuzzy_search.gif"/>
+For comparison
+<img src="./media/cursor-based-pagination.png"/>
 
-
-3. Simple cache on the pagination result
-
-Assuming the user use the pagination button, the results array on the server would be the same as previous. To save us time on the searching, I apply simple caching mechanism. This can be improved by using Redis or other caching service to make our API instance stay stateless.
-
-<img src="./media/cache.png"/>
-
-
-
----
-Welcome to Haraj take home challenge!
-
-In this repository you will find simple web app for fictional startup called KraickList. This app will allow users to search ads from given sample data located in `data.gz`.
-
-Currently the app is just rough prototype. The search is case sensitive, limited to exact matches, & the search result is pretty much could be further improved.
-
-You could see the live version of this app [here](https://gentle-forest-97151.herokuapp.com/). Try searching for "iPhone" to see some results.
-
-## Your Mission
-
-Improve the overall app. Think about the problem from user perspective and prioritize your changes according to what you think is most useful.
-
-## Evalution
-
-We will evaluate your submission based on:
-
-1. The approach you are using to identify & solve the problems
-2. The quality of your search result
-3. The design & testability of your code
-4. The method you are using to deploy your app
-
-## Submission
-
-1. Fork this repository and share us the link to your fork after pushing the changes.
-2. Host your solution. This project includes Heroku Procfile and in its current state can be deployed easily on free tier. You could also host the app on your own server. Share us the link to your solution.
-3. In your submission, share with us what changes you have made and what further changes you would prioritize if you had more time.
-
-## About Sample Data
-
-The data is translated from Arabic to English using Google Translate, so sometimes you will find funny translation on it. 🤣
+## Load testing
+TODO
