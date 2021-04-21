@@ -138,7 +138,7 @@ func loadData(db *sql.DB, filepath string, dbpath string) error {
 
 			_, err = db.Exec(script)
 			if err != nil {
-				fmt.Printf("Record insertion script execution error : %v", err)
+				fmt.Printf("Record insertion script execution error : %v %s", err, script)
 				currentWork += 1
 				continue
 			}
